@@ -1,6 +1,7 @@
 "use client"
 
 import Link from "next/link"
+import Image from "next/image"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet"
@@ -27,31 +28,13 @@ export default function SiteHeader() {
 			<div className="container mx-auto flex h-16 items-center justify-between px-4">
 				<Link href="/" className="flex items-center gap-2">
 					<div className="flex items-center gap-2">
-						<svg 
-							width="32" 
-							height="32" 
-							viewBox="0 0 32 32" 
+						<Image
+							src="/assets/SlapRush Logo.png"
+							alt="SlapRush Logo"
+							width={102}
+							height={102}
 							className="text-purple-600 dark:text-purple-400"
-							fill="currentColor"
-						>
-							{/* Printer base */}
-							<rect x="4" y="12" width="24" height="12" rx="2" className="fill-current opacity-80" />
-							{/* Paper tray */}
-							<rect x="6" y="20" width="20" height="2" className="fill-white dark:fill-gray-900" />
-							{/* Print head */}
-							<rect x="8" y="8" width="16" height="4" rx="1" className="fill-current" />
-							{/* Paper coming out */}
-							<rect x="10" y="4" width="12" height="6" rx="1" className="fill-current opacity-60" />
-							{/* Design elements on paper */}
-							<circle cx="14" cy="6" r="1" className="fill-pink-500" />
-							<circle cx="18" cy="7" r="1" className="fill-orange-400" />
-							<rect x="12" y="8" width="8" height="1" rx="0.5" className="fill-current opacity-40" />
-							{/* Control buttons */}
-							<circle cx="10" cy="16" r="1" className="fill-green-500" />
-							<circle cx="13" cy="16" r="1" className="fill-red-500" />
-							{/* Creative sparkle */}
-							<path d="M26 6 L28 8 L26 10 L24 8 Z" className="fill-yellow-400" />
-						</svg>
+						/>
 						<div className="flex flex-col">
 							<span className="text-xl font-bold text-gray-800 dark:text-gray-200 leading-tight">SlapRush</span>
 							<span className="text-[10px] text-purple-600 dark:text-purple-400 font-medium -mt-1">PRINT ON DEMAND</span>
