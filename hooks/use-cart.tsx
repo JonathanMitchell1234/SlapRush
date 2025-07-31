@@ -80,6 +80,7 @@ export const CartProvider = ({ children }: { children: React.ReactNode }) => {
     }
   }
 
+  
   const clearCart = () => {
     setCart([])
   }
