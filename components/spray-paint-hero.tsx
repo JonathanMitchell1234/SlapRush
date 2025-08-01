@@ -440,7 +440,7 @@ export default function SprayPaintHero() {
       {/* headline & copy */}
       <div className="relative z-30 container mx-auto px-4 text-center">
         <h1
-          className={`${graffitiFont.className} text-6xl sm:text-7xl md:text-8xl lg:text-9xl font-black mb-8 leading-none`}
+          className={`${graffitiFont.className} text-7xl sm:text-8xl md:text-9xl lg:text-[12rem] xl:text-[14rem] font-black mb-8 leading-none`}
         >
           {TITLE.split('').map((L,i)=>(
             <span key={i}
