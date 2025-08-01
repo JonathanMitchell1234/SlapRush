@@ -129,7 +129,7 @@ export default function SprayPaintHero() {
         setCan({x:15+i*10,y:40+Math.sin(i*.8)*8})
         return i+1
       })
-    },400)
+    },200)
     return ()=>clearInterval(t)
   },[visible,burst])
 
