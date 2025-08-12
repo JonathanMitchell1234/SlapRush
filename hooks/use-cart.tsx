@@ -9,6 +9,24 @@ export type CartItem = {
   imageUrl: string
   price: number
   quantity: number
+  // Optional customization details for print-on-demand personalized items
+  customization?: {
+    baseProductId: string
+    layers: Array<{
+      type: 'image' | 'text'
+      src?: string // for image layers (data URL)
+      text?: string // for text layers
+      x: number
+      y: number
+      width: number
+      height: number
+    }>
+    previewDataUrl: string // flattened preview for cart / checkout display
+  // Advanced editor metadata
+  fabricJson?: any
+  printAreaId?: string
+  productionPng?: string // full resolution export data URL
+  }
 }
 
 // Define the shape of the cart context

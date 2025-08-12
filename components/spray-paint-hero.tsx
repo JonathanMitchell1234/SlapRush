@@ -1,6 +1,6 @@
 'use client'
 
-import React, { useEffect, useRef, useState } from 'react'
+import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { ArrowRight } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Creepster } from 'next/font/google'
@@ -28,70 +28,108 @@ const COLORS = [
 /* ------------------------------------------------------------------ */
 /*  custom hook that owns canvas & animation                          */
 /* ------------------------------------------------------------------ */
-function useSprayCanvas(ref:React.RefObject<HTMLCanvasElement>, run:boolean) {
+function useSprayCanvas(ref:React.RefObject<HTMLCanvasElement | null>, run:boolean) {
   const parts = useRef<Part[]>([])
   const drips = useRef<Drop[]>([])
-  const raf   = useRef<number>()
-  const rnd   = (a:number,b:number)=>Math.random()*(b-a)+a
+  const raf   = useRef<number | null>(null)
+  const ctxRef= useRef<CanvasRenderingContext2D | null>(null)
+  const running= useRef(false)
+  const MAX_PARTS = 450  // hard cap to avoid runaway memory on slower devices
+  const rnd = (a:number,b:number)=>Math.random()*(b-a)+a
 
-  const burst = (x:number,y:number)=>{
-    const p:Part[]=[], d:Drop[]=[]
-    for(let i=0;i<15;i++){
-      const col=COLORS[Math.floor(Math.random()*COLORS.length)]
-      p.push({x:x+rnd(-15,15),y:y+rnd(-15,15),vx:rnd(-3,3),vy:rnd(-3,3),
-              r:rnd(1,3.5),life:rnd(20,40),max:0,c:Math.random()>.5?col.p:col.s})
+  const startLoop = useCallback(()=>{
+    if(running.current || !ctxRef.current) return
+    running.current = true
+    const cvs = ref.current!
+    const ctx = ctxRef.current
+    const step=()=>{
+      // physics update (mutate in place & filter dead)
+      parts.current = parts.current.filter(p=>{
+        p.x+=p.vx; p.y+=p.vy; p.vx*=0.985; p.vy = p.vy*0.985 + 0.05; p.life--; return p.life>0
+      })
+      drips.current = drips.current.filter(d=>{
+        d.x+=d.vx; d.y+=d.vy; d.vy+=d.g; d.vx*=0.99; d.life--; return d.life>0
+      })
+
+      if(parts.current.length===0 && drips.current.length===0){
+        // nothing left to draw; pause loop until next burst
+        running.current=false
+        raf.current=null
+        return
+      }
+
+      ctx!.clearRect(0,0,cvs.width,cvs.height)
+      ctx!.globalCompositeOperation='screen'
+
+      for(const d of drips.current){
+        const a=d.life/d.max; if(a<0.12) continue
+        ctx!.globalAlpha=a*0.75; ctx!.fillStyle=d.c
+        ctx!.beginPath(); ctx!.ellipse(d.x,d.y,d.r,d.r*1.4,0,0,Math.PI*2); ctx!.fill()
+      }
+      for(const p of parts.current){
+        const a=p.life/p.max; if(a<0.12) continue
+        ctx!.globalAlpha=a
+        const g=ctx!.createRadialGradient(p.x,p.y,0,p.x,p.y,p.r*1.4)
+        g.addColorStop(0,p.c); g.addColorStop(1,'transparent')
+        ctx!.fillStyle=g
+        ctx!.beginPath(); ctx!.arc(p.x,p.y,p.r,0,Math.PI*2); ctx!.fill()
+      }
+      ctx!.globalCompositeOperation='source-over'
+      raf.current = requestAnimationFrame(step)
     }
-    for(let i=0;i<5;i++){
+    raf.current = requestAnimationFrame(step)
+  },[ref])
+
+  const burst = useCallback((x:number,y:number)=>{
+    // Skip if animation disabled
+    if(!run) return
+    const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches
+    if(reduce) return
+    // Respect particle cap (trim oldest first)
+    if(parts.current.length > MAX_PARTS) parts.current.splice(0, parts.current.length - MAX_PARTS)
+    if(drips.current.length > MAX_PARTS) drips.current.splice(0, drips.current.length - MAX_PARTS)
+
+    const pCount = 14
+    const dCount = 4
+    for(let i=0;i<pCount;i++){
       const col=COLORS[Math.floor(Math.random()*COLORS.length)]
-      d.push({x:x+rnd(-20,20),y:y+rnd(-10,10),vx:rnd(-1,1),vy:rnd(1,3),
-              r:rnd(2,5),life:rnd(40,80),max:0,g:rnd(.08,.25),c:col.p})
+      const life = rnd(22,38)
+      parts.current.push({x:x+rnd(-15,15),y:y+rnd(-15,15),vx:rnd(-3,3),vy:rnd(-3,3),r:rnd(1,3.4),life,max:life,c:Math.random()>.5?col.p:col.s})
     }
-    p.forEach(p=>p.max=p.life); d.forEach(q=>q.max=q.life)
-    parts.current.push(...p); drips.current.push(...d)
-  }
+    for(let i=0;i<dCount;i++){
+      const col=COLORS[Math.floor(Math.random()*COLORS.length)]
+      const life=rnd(50,90)
+      drips.current.push({x:x+rnd(-18,18),y:y+rnd(-10,10),vx:rnd(-1,1),vy:rnd(1,3),r:rnd(2,5),life,max:life,g:rnd(.08,.22),c:col.p})
+    }
+    startLoop()
+  },[run,startLoop])
 
   useEffect(()=>{
     const cvs=ref.current
     if(!cvs) return
-    const ctx=cvs.getContext('2d') as CanvasRenderingContext2D
+    const ctx=cvs.getContext('2d') as CanvasRenderingContext2D | null
+    if(!ctx) return
+    ctxRef.current = ctx
 
-    /* Hi-DPI sizing */
+    // Hi-DPI sizing (avoid cumulative scaling)
     const setSize=()=>{
-      const {width:h,height:w}=cvs.getBoundingClientRect()
-      const dpr=devicePixelRatio||1
-      cvs.width=h*dpr; cvs.height=w*dpr; ctx.scale(dpr,dpr)
-    }
-    setSize(); addEventListener('resize',setSize)
-
-    const reduce=matchMedia('(prefers-reduced-motion: reduce)').matches
-    const step=()=>{
-      parts.current=parts.current.filter(p=>{p.x+=p.vx;p.y+=p.vy;p.vx*=.985;p.vy=p.vy*.985+.05;p.life--;return p.life>0})
-      drips.current=drips.current.filter(d=>{d.x+=d.vx;d.y+=d.vy;d.vy+=d.g;d.vx*=.99;d.life--;return d.life>0})
-
-      ctx.clearRect(0,0,cvs.width,cvs.height)
-      ctx.globalCompositeOperation='screen'
-
-      for(const d of drips.current){
-        const a=d.life/d.max;if(a<.1)continue
-        ctx.globalAlpha=a*.8;ctx.fillStyle=d.c
-        ctx.beginPath();ctx.ellipse(d.x,d.y,d.r,d.r*1.5,0,0,Math.PI*2);ctx.fill()
+      const rect = cvs.getBoundingClientRect()
+      const dpr = window.devicePixelRatio || 1
+      // Reset transform to avoid compounding scale
+      ctx.setTransform(1,0,0,1,0,0)
+      const needResize = cvs.width !== Math.floor(rect.width*dpr) || cvs.height !== Math.floor(rect.height*dpr)
+      if(needResize){
+        cvs.width = Math.floor(rect.width * dpr)
+        cvs.height= Math.floor(rect.height * dpr)
       }
-      for(const p of parts.current){
-        const a=p.life/p.max;if(a<.1)continue
-        ctx.globalAlpha=a
-        const g=ctx.createRadialGradient(p.x,p.y,0,p.x,p.y,p.r*1.5)
-        g.addColorStop(0,p.c);g.addColorStop(1,'transparent')
-        ctx.fillStyle=g
-        ctx.beginPath();ctx.arc(p.x,p.y,p.r,0,Math.PI*2);ctx.fill()
-      }
-
-      ctx.globalCompositeOperation='source-over'
-      raf.current=requestAnimationFrame(step)
+      ctx.scale(dpr,dpr)
     }
+    setSize(); addEventListener('resize',setSize,{passive:true})
+    return ()=>{ removeEventListener('resize',setSize); if(raf.current) cancelAnimationFrame(raf.current) }
+  },[ref])
 
-    if(run && !reduce) raf.current=requestAnimationFrame(step)
-    return ()=>{removeEventListener('resize',setSize);raf.current&&cancelAnimationFrame(raf.current)}
-  },[ref,run])
+  // If run toggles on and we have particles, restart loop
+  useEffect(()=>{ if(run && (parts.current.length||drips.current.length)) startLoop(); },[run,startLoop])
 
   return burst
 }
@@ -103,7 +141,8 @@ const TITLE = 'SLAPRUSH'
 const SUB   = 'Premium Print-On-Demand'
 
 export default function SprayPaintHero() {
-  const cvs = useRef<HTMLCanvasElement>(null)
+  // Use a broader ref type; the hook internally guards for null.
+  const cvs = useRef<HTMLCanvasElement | null>(null)
   const [visible,setVisible]=useState(false)
   const [idx,setIdx] = useState(0)
   const [can,setCan] = useState({x:50,y:50})
@@ -119,18 +158,30 @@ export default function SprayPaintHero() {
   /* letter reveal */
   useEffect(()=>{
     if(!visible) return
-    const t=setInterval(()=>{
-      setIdx(i=>{
-        if(i>=TITLE.length) return i
-        const rect=cvs.current!.getBoundingClientRect()
-        const x=rect.width*.3 + i*(rect.width*.4/TITLE.length)
-        const y=rect.height*.35
+    // Use a single RAF-driven scheduler to reduce setInterval wakeups on older CPUs
+    let start:number|null=null
+    let lastIndex = idx
+    let frame:number
+    const perLetter = 200 // ms between letters
+    const runFrame=(ts:number)=>{
+      if(start==null) start=ts
+      const elapsed = ts - start
+      const target = Math.min(TITLE.length, Math.floor(elapsed / perLetter))
+      while(lastIndex < target){
+        const rect = cvs.current!.getBoundingClientRect()
+        const x = rect.width*0.3 + lastIndex*(rect.width*0.4/TITLE.length)
+        const y = rect.height*0.35
         burst(x,y)
-        setCan({x:15+i*10,y:40+Math.sin(i*.8)*8})
-        return i+1
-      })
-    },200)
-    return ()=>clearInterval(t)
+        setCan({x:15+lastIndex*10,y:40+Math.sin(lastIndex*0.8)*8})
+        lastIndex++
+      }
+      if(lastIndex !== idx) setIdx(lastIndex)
+      if(lastIndex < TITLE.length){ frame=requestAnimationFrame(runFrame) }
+    }
+    frame=requestAnimationFrame(runFrame)
+    return ()=>cancelAnimationFrame(frame)
+  // deliberately omit idx from deps to avoid restart mid animation
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   },[visible,burst])
 
   /* ---------------------------------------------------------------- */
