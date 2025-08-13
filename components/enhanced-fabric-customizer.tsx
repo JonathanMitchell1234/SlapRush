@@ -80,6 +80,7 @@ export default function EnhancedFabricCustomizer({ baseProductId }: EnhancedCust
   const [undoStack, setUndoStack] = useState<any[]>([])
   const [redoStack, setRedoStack] = useState<any[]>([])
   const [activeTab, setActiveTab] = useState('templates')
+  const [isLoadingState, setIsLoadingState] = useState(false)
   
   // Text controls
   const [textValue, setTextValue] = useState('')
@@ -105,11 +106,49 @@ export default function EnhancedFabricCustomizer({ baseProductId }: EnhancedCust
   const [imageFilter, setImageFilter] = useState('None')
 
   const saveState = useCallback(() => {
-    if (!fabricRef.current) return
+    if (!fabricRef.current || isLoadingState) return
+    
     const state = JSON.stringify(fabricRef.current.toJSON())
-    setUndoStack(prev => [...prev.slice(-19), state]) // Keep last 20 states
+    
+    // Don't save if state hasn't changed
+    if (undoStack.length > 0 && undoStack[undoStack.length - 1] === state) {
+      return
+    }
+    
+    setUndoStack(prev => {
+      const newStack = [...prev.slice(-19), state] // Keep last 20 states
+      return newStack
+    })
     setRedoStack([]) // Clear redo stack when new action is performed
-  }, [])
+  }, [undoStack, isLoadingState])
+
+  // Manual save function for user actions
+  const manualSaveState = useCallback(() => {
+    if (!fabricRef.current || isLoadingState) return
+    
+    setTimeout(() => {
+      if (!fabricRef.current) return
+      const state = JSON.stringify(fabricRef.current.toJSON())
+      
+      setUndoStack(prev => {
+        // Don't save if state hasn't changed
+        if (prev.length > 0 && prev[prev.length - 1] === state) {
+          return prev
+        }
+        const newStack = [...prev.slice(-19), state]
+        return newStack
+      })
+      setRedoStack([])
+    }, 50) // Small delay to ensure state is stable
+  }, [isLoadingState])
+
+  // Debounced save state to avoid too many saves
+  const debouncedSaveState = useCallback(() => {
+    const timeoutId = setTimeout(() => {
+      saveState()
+    }, 300)
+    return () => clearTimeout(timeoutId)
+  }, [saveState])
 
   const initFabric = useCallback(() => {
     if (!canvasRef.current) return
@@ -142,9 +181,20 @@ export default function EnhancedFabricCustomizer({ baseProductId }: EnhancedCust
       setSelectedObj(null)
     })
     
-    canvas.on('object:added', saveState)
-    canvas.on('object:removed', saveState)
-    canvas.on('object:modified', saveState)
+    // Only save state when object is modified by user (moved, scaled, etc.)
+    canvas.on('object:modified', () => {
+      if (!isLoadingState) {
+        manualSaveState()
+      }
+    })
+    
+    // Save initial state
+    setTimeout(() => {
+      if (fabricRef.current) {
+        const initialState = JSON.stringify(fabricRef.current.toJSON())
+        setUndoStack([initialState])
+      }
+    }, 100)
 
     fabricRef.current = canvas
 
@@ -175,12 +225,30 @@ export default function EnhancedFabricCustomizer({ baseProductId }: EnhancedCust
       })
     })
 
-  }, [activeArea, areas, saveState])
+  }, [activeArea, areas, isLoadingState, manualSaveState])
 
   // Recreate canvas when area changes
   useEffect(() => {
+    // Cleanup function
+    return () => {
+      if (fabricRef.current) {
+        try {
+          fabricRef.current.dispose()
+        } catch (error) {
+          console.warn('Error disposing fabric canvas:', error)
+        }
+        fabricRef.current = null
+      }
+    }
+  }, [])
+
+  useEffect(() => {
     if (fabricRef.current) {
-      fabricRef.current.dispose()
+      try {
+        fabricRef.current.dispose()
+      } catch (error) {
+        console.warn('Error disposing fabric canvas:', error)
+      }
       fabricRef.current = null
     }
     initFabric()
@@ -188,36 +256,44 @@ export default function EnhancedFabricCustomizer({ baseProductId }: EnhancedCust
 
   // Undo/Redo functions
   const undo = () => {
-    if (!fabricRef.current || undoStack.length === 0) return
+    if (!fabricRef.current || undoStack.length <= 1) return
     
+    setIsLoadingState(true)
     const currentState = JSON.stringify(fabricRef.current.toJSON())
-    const previousState = undoStack[undoStack.length - 1]
+    const previousState = undoStack[undoStack.length - 2] // Get the state before current
     
-    setRedoStack(prev => [...prev, currentState])
+    setRedoStack(prev => [currentState, ...prev])
     setUndoStack(prev => prev.slice(0, -1))
     
     fabricRef.current.loadFromJSON(previousState, () => {
       fabricRef.current.renderAll()
+      setIsLoadingState(false)
     })
   }
 
   const redo = () => {
     if (!fabricRef.current || redoStack.length === 0) return
     
+    setIsLoadingState(true)
     const currentState = JSON.stringify(fabricRef.current.toJSON())
-    const nextState = redoStack[redoStack.length - 1]
+    const nextState = redoStack[0]
     
     setUndoStack(prev => [...prev, currentState])
-    setRedoStack(prev => prev.slice(0, -1))
+    setRedoStack(prev => prev.slice(1))
     
     fabricRef.current.loadFromJSON(nextState, () => {
       fabricRef.current.renderAll()
+      setIsLoadingState(false)
     })
   }
 
   // Text functions
   const addText = () => {
     if (!fabricRef.current || !textValue.trim()) return
+    
+    // Save state before adding
+    saveState()
+    
     const textbox = new fabric.Textbox(textValue.trim(), {
       left: 60,
       top: 60,
@@ -234,10 +310,17 @@ export default function EnhancedFabricCustomizer({ baseProductId }: EnhancedCust
     fabricRef.current.add(textbox)
     fabricRef.current.setActiveObject(textbox)
     fabricRef.current.requestRenderAll()
+    
+    // Save state manually after adding text
+    manualSaveState()
+    
+    // Clear the text input after adding
+    setTextValue('')
   }
 
-  const updateActiveText = () => {
+  const updateActiveText = useCallback(() => {
     if (!fabricRef.current || !selectedObj || selectedObj.type !== 'textbox') return
+    
     const textbox = selectedObj as any
     textbox.set({ 
       text: textValue, 
@@ -251,7 +334,7 @@ export default function EnhancedFabricCustomizer({ baseProductId }: EnhancedCust
       strokeWidth: strokeEnabled ? strokeWidth : 0 
     })
     fabricRef.current.requestRenderAll()
-  }
+  }, [selectedObj, textValue, fontSize, fontFamily, textColor, isBold, isItalic, textAlign, strokeEnabled, strokeColor, strokeWidth])
 
   // Shape functions
   const addRectangle = () => {
@@ -268,6 +351,7 @@ export default function EnhancedFabricCustomizer({ baseProductId }: EnhancedCust
     fabricRef.current.add(rect)
     fabricRef.current.setActiveObject(rect)
     fabricRef.current.requestRenderAll()
+    manualSaveState()
   }
 
   const addCircle = () => {
@@ -283,6 +367,7 @@ export default function EnhancedFabricCustomizer({ baseProductId }: EnhancedCust
     fabricRef.current.add(circle)
     fabricRef.current.setActiveObject(circle)
     fabricRef.current.requestRenderAll()
+    manualSaveState()
   }
 
   const addLine = () => {
@@ -294,11 +379,13 @@ export default function EnhancedFabricCustomizer({ baseProductId }: EnhancedCust
     fabricRef.current.add(line)
     fabricRef.current.setActiveObject(line)
     fabricRef.current.requestRenderAll()
+    manualSaveState()
   }
 
   // Image functions
   const handleFile = (file: File) => {
     if (!file || !fabricRef.current) return
+    
     const reader = new FileReader()
     reader.onload = () => {
       const dataUrl = reader.result as string
@@ -318,6 +405,7 @@ export default function EnhancedFabricCustomizer({ baseProductId }: EnhancedCust
         fabricRef.current.add(imgInstance)
         fabricRef.current.setActiveObject(imgInstance)
         fabricRef.current.requestRenderAll()
+        manualSaveState()
       }
       el.onerror = () => {
         console.error('Failed to load uploaded image')
@@ -362,17 +450,18 @@ export default function EnhancedFabricCustomizer({ baseProductId }: EnhancedCust
   }
 
   // Object manipulation functions
-  const updateObjectOpacity = (opacity: number) => {
+  const updateObjectOpacity = useCallback((opacity: number) => {
     if (!selectedObj) return
     selectedObj.set('opacity', opacity / 100)
     fabricRef.current?.requestRenderAll()
-  }
+  }, [selectedObj])
 
   const removeSelected = () => {
     if (fabricRef.current && selectedObj) {
       fabricRef.current.remove(selectedObj)
       fabricRef.current.discardActiveObject().requestRenderAll()
       setSelectedObj(null)
+      manualSaveState()
     }
   }
 
@@ -387,6 +476,7 @@ export default function EnhancedFabricCustomizer({ baseProductId }: EnhancedCust
       fabricRef.current.add(cloned)
       fabricRef.current.setActiveObject(cloned)
       fabricRef.current.requestRenderAll()
+      manualSaveState()
     })
   }
 
@@ -421,7 +511,9 @@ export default function EnhancedFabricCustomizer({ baseProductId }: EnhancedCust
   // Template functions
   const applyDesignTemplate = (template: DesignTemplate) => {
     if (!fabricRef.current) return
+    setIsLoadingState(true)
     applyTemplate(fabricRef.current, template)
+    setTimeout(() => setIsLoadingState(false), 100) // Small delay to ensure template is applied
   }
 
   // Export function
@@ -493,13 +585,18 @@ export default function EnhancedFabricCustomizer({ baseProductId }: EnhancedCust
     }
   }, [selectedObj])
 
-  useEffect(() => { 
-    updateActiveText() 
-  }, [textValue, fontSize, fontFamily, textColor, isBold, isItalic, textAlign, strokeEnabled, strokeWidth, strokeColor])
-
+  // Update object opacity when slider changes
   useEffect(() => { 
     updateObjectOpacity(objectOpacity) 
-  }, [objectOpacity])
+  }, [objectOpacity, updateObjectOpacity])
+
+  // Update text properties when they change (but only for selected textbox)
+  useEffect(() => {
+    // Only update if we have a selected textbox and we're not loading state
+    if (selectedObj && selectedObj.type === 'textbox' && !isLoadingState) {
+      updateActiveText()
+    }
+  }, [textValue, fontSize, fontFamily, textColor, isBold, isItalic, textAlign, strokeEnabled, strokeWidth, strokeColor]) // Removed selectedObj and updateActiveText from deps
 
   return (
     <div className="space-y-6">
