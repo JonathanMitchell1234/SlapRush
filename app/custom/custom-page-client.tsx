@@ -2,7 +2,7 @@
 
 import { useState } from 'react'
 import Image from 'next/image'
-import FabricProductCustomizer from '@/components/fabric-product-customizer'
+import EnhancedFabricCustomizer from '@/components/enhanced-fabric-customizer'
 import { products } from '@/lib/products'
 
 export default function CustomPageClient({ initialProductId }: { initialProductId: string }) {
@@ -37,7 +37,7 @@ export default function CustomPageClient({ initialProductId }: { initialProductI
       </section>
       <section className="space-y-4">
         <h2 className="text-xl font-semibold">2. Customize</h2>
-        <FabricProductCustomizer baseProductId={selectedProductId} />
+        <EnhancedFabricCustomizer baseProductId={selectedProductId} />
       </section>
     </div>
   )
