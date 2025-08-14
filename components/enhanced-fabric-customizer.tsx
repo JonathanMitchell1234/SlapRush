@@ -256,35 +256,40 @@ export default function EnhancedFabricCustomizer({ baseProductId }: EnhancedCust
 
   // Undo/Redo functions
   const undo = () => {
-    if (!fabricRef.current || undoStack.length <= 1) return
+    if (!fabricRef.current || undoStack.length <= 1) return;
     
-    setIsLoadingState(true)
-    const currentState = JSON.stringify(fabricRef.current.toJSON())
-    const previousState = undoStack[undoStack.length - 2] // Get the state before current
+    setIsLoadingState(true);
     
-    setRedoStack(prev => [currentState, ...prev])
-    setUndoStack(prev => prev.slice(0, -1))
+    const stateToUndo = undoStack[undoStack.length - 1];
+    const prevState = undoStack[undoStack.length - 2];
     
-    fabricRef.current.loadFromJSON(previousState, () => {
-      fabricRef.current.renderAll()
-      setIsLoadingState(false)
-    })
+    setRedoStack(prev => [stateToUndo, ...prev]);
+    setUndoStack(prev => prev.slice(0, -1));
+
+    fabricRef.current.loadFromJSON(prevState, () => {
+      fabricRef.current.renderAll();
+      setIsLoadingState(false);
+      // Ensure the active object is updated after state load
+      setSelectedObj(fabricRef.current.getActiveObject() || null);
+    });
   }
 
   const redo = () => {
-    if (!fabricRef.current || redoStack.length === 0) return
+    if (!fabricRef.current || redoStack.length === 0) return;
+
+    setIsLoadingState(true);
+
+    const nextState = redoStack[0];
     
-    setIsLoadingState(true)
-    const currentState = JSON.stringify(fabricRef.current.toJSON())
-    const nextState = redoStack[0]
-    
-    setUndoStack(prev => [...prev, currentState])
-    setRedoStack(prev => prev.slice(1))
+    setUndoStack(prev => [...prev, nextState]);
+    setRedoStack(prev => prev.slice(1));
     
     fabricRef.current.loadFromJSON(nextState, () => {
-      fabricRef.current.renderAll()
-      setIsLoadingState(false)
-    })
+      fabricRef.current.renderAll();
+      setIsLoadingState(false);
+      // Ensure the active object is updated after state load
+      setSelectedObj(fabricRef.current.getActiveObject() || null);
+    });
   }
 
   // Text functions
