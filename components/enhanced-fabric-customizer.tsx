@@ -142,6 +142,10 @@ export default function EnhancedFabricCustomizer({ baseProductId }: EnhancedCust
     }, 50) // Small delay to ensure state is stable
   }, [isLoadingState])
 
+  // Ref to hold the latest manualSaveState function to avoid stale closures in event handlers
+  const manualSaveStateRef = useRef(manualSaveState);
+  manualSaveStateRef.current = manualSaveState;
+
   // Debounced save state to avoid too many saves
   const debouncedSaveState = useCallback(() => {
     const timeoutId = setTimeout(() => {
@@ -183,9 +187,7 @@ export default function EnhancedFabricCustomizer({ baseProductId }: EnhancedCust
     
     // Only save state when object is modified by user (moved, scaled, etc.)
     canvas.on('object:modified', () => {
-      if (!isLoadingState) {
-        manualSaveState()
-      }
+      manualSaveStateRef.current()
     })
     
     // Save initial state
@@ -225,7 +227,7 @@ export default function EnhancedFabricCustomizer({ baseProductId }: EnhancedCust
       })
     })
 
-  }, [activeArea, areas, isLoadingState, manualSaveState])
+  }, [activeArea, areas])
 
   // Recreate canvas when area changes
   useEffect(() => {
