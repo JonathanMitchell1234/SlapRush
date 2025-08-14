@@ -38,6 +38,64 @@ import {
   Upload
 } from 'lucide-react'
 
+// State management for undo/redo history
+type HistoryState = {
+  stack: string[];
+  index: number;
+};
+
+type HistoryAction =
+  | { type: 'SET_INITIAL'; payload: string }
+  | { type: 'PUSH'; payload: string }
+  | { type: 'UNDO' }
+  | { type: 'REDO' };
+
+const initialHistoryState: HistoryState = {
+  stack: [],
+  index: -1,
+};
+
+function historyReducer(state: HistoryState, action: HistoryAction): HistoryState {
+  const { stack, index } = state;
+
+  switch (action.type) {
+    case 'SET_INITIAL':
+      return {
+        stack: [action.payload],
+        index: 0,
+      };
+    case 'PUSH':
+      // If we are not at the end of the stack, we need to drop the redo history
+      const newStack = [...stack.slice(0, index + 1), action.payload];
+      return {
+        stack: newStack.slice(-20), // Keep a max of 20 states
+        index: newStack.length - 1,
+      };
+    case 'UNDO':
+      if (index <= 0) return state;
+      return { ...state, index: index - 1 };
+    case 'REDO':
+      if (index >= stack.length - 1) return state;
+      return { ...state, index: index + 1 };
+    default:
+      return state;
+  }
+}
+
+// Simple debounce utility
+function debounce<T extends (...args: any[]) => any>(func: T, wait: number): (...args: Parameters<T>) => void {
+  let timeout: NodeJS.Timeout;
+  return function executedFunction(...args: Parameters<T>) {
+    const later = () => {
+      clearTimeout(timeout);
+      func(...args);
+    };
+    clearTimeout(timeout);
+    timeout = setTimeout(later, wait);
+  };
+}
+
+
 interface EnhancedCustomizerProps {
   baseProductId: string
 }
@@ -76,12 +134,15 @@ export default function EnhancedFabricCustomizer({ baseProductId }: EnhancedCust
   const { addToCart } = useCart()
 
   // State management
+  const [history, dispatch] = useReducer(historyReducer, initialHistoryState);
   const [selectedObj, setSelectedObj] = useState<any | null>(null)
-  const [undoStack, setUndoStack] = useState<any[]>([])
-  const [redoStack, setRedoStack] = useState<any[]>([])
   const [activeTab, setActiveTab] = useState('templates')
   const [isLoadingState, setIsLoadingState] = useState(false)
   
+  // Derived state for undo/redo buttons
+  const canUndo = history.index > 0;
+  const canRedo = history.index < history.stack.length - 1;
+
   // Text controls
   const [textValue, setTextValue] = useState('')
   const [fontSize, setFontSize] = useState(56)
@@ -105,54 +166,24 @@ export default function EnhancedFabricCustomizer({ baseProductId }: EnhancedCust
   // Image controls
   const [imageFilter, setImageFilter] = useState('None')
 
-  const saveState = useCallback(() => {
-    if (!fabricRef.current || isLoadingState) return
-    
-    const state = JSON.stringify(fabricRef.current.toJSON())
-    
-    // Don't save if state hasn't changed
-    if (undoStack.length > 0 && undoStack[undoStack.length - 1] === state) {
-      return
-    }
-    
-    setUndoStack(prev => {
-      const newStack = [...prev.slice(-19), state] // Keep last 20 states
-      return newStack
-    })
-    setRedoStack([]) // Clear redo stack when new action is performed
-  }, [undoStack, isLoadingState])
-
   // Manual save function for user actions
   const manualSaveState = useCallback(() => {
-    if (!fabricRef.current || isLoadingState) return
+    if (!fabricRef.current || isLoadingState) return;
     
-    setTimeout(() => {
-      if (!fabricRef.current) return
-      const state = JSON.stringify(fabricRef.current.toJSON())
-      
-      setUndoStack(prev => {
-        // Don't save if state hasn't changed
-        if (prev.length > 0 && prev[prev.length - 1] === state) {
-          return prev
-        }
-        const newStack = [...prev.slice(-19), state]
-        return newStack
-      })
-      setRedoStack([])
-    }, 50) // Small delay to ensure state is stable
-  }, [isLoadingState])
+    const currentState = JSON.stringify(fabricRef.current.toJSON());
+    const previousState = history.stack[history.index];
 
-  // Ref to hold the latest manualSaveState function to avoid stale closures in event handlers
-  const manualSaveStateRef = useRef(manualSaveState);
-  manualSaveStateRef.current = manualSaveState;
+    if (currentState !== previousState) {
+      dispatch({ type: 'PUSH', payload: currentState });
+    }
+  }, [history.index, history.stack, isLoadingState])
 
-  // Debounced save state to avoid too many saves
-  const debouncedSaveState = useCallback(() => {
-    const timeoutId = setTimeout(() => {
-      saveState()
-    }, 300)
-    return () => clearTimeout(timeoutId)
-  }, [saveState])
+  // NOTE: The 'saveState' and 'debouncedSaveState' functions are removed as they are replaced by manualSaveState and the reducer pattern.
+
+  const debouncedSave = useMemo(
+    () => debounce(manualSaveState, 300),
+    [manualSaveState]
+  );
 
   const initFabric = useCallback(() => {
     if (!canvasRef.current) return
@@ -186,17 +217,11 @@ export default function EnhancedFabricCustomizer({ baseProductId }: EnhancedCust
     })
     
     // Only save state when object is modified by user (moved, scaled, etc.)
-    canvas.on('object:modified', () => {
-      manualSaveStateRef.current()
-    })
+    canvas.on('object:modified', debouncedSave)
     
     // Save initial state
-    setTimeout(() => {
-      if (fabricRef.current) {
-        const initialState = JSON.stringify(fabricRef.current.toJSON())
-        setUndoStack([initialState])
-      }
-    }, 100)
+    const initialState = JSON.stringify(canvas.toJSON())
+    dispatch({ type: 'SET_INITIAL', payload: initialState });
 
     fabricRef.current = canvas
 
@@ -227,7 +252,7 @@ export default function EnhancedFabricCustomizer({ baseProductId }: EnhancedCust
       })
     })
 
-  }, [activeArea, areas])
+  }, [activeArea, areas, debouncedSave])
 
   // Recreate canvas when area changes
   useEffect(() => {
@@ -256,50 +281,42 @@ export default function EnhancedFabricCustomizer({ baseProductId }: EnhancedCust
     initFabric()
   }, [initFabric])
 
+  // Effect to load state into canvas when history changes
+  const currentState = history.stack[history.index];
+  useEffect(() => {
+    if (fabricRef.current && currentState) {
+      // Prevent loading the same state again
+      const currentCanvasState = JSON.stringify(fabricRef.current.toJSON());
+      if (currentCanvasState === currentState) {
+        return;
+      }
+
+      setIsLoadingState(true);
+      fabricRef.current.loadFromJSON(currentState, () => {
+        fabricRef.current.renderAll();
+        setIsLoadingState(false);
+        setSelectedObj(fabricRef.current.getActiveObject() || null);
+      });
+    }
+  }, [currentState]);
+
+
   // Undo/Redo functions
   const undo = () => {
-    if (!fabricRef.current || undoStack.length <= 1) return;
-    
-    setIsLoadingState(true);
-    
-    const stateToUndo = undoStack[undoStack.length - 1];
-    const prevState = undoStack[undoStack.length - 2];
-    
-    setRedoStack(prev => [stateToUndo, ...prev]);
-    setUndoStack(prev => prev.slice(0, -1));
-
-    fabricRef.current.loadFromJSON(prevState, () => {
-      fabricRef.current.renderAll();
-      setIsLoadingState(false);
-      // Ensure the active object is updated after state load
-      setSelectedObj(fabricRef.current.getActiveObject() || null);
-    });
+    if (canUndo) {
+      dispatch({ type: 'UNDO' });
+    }
   }
 
   const redo = () => {
-    if (!fabricRef.current || redoStack.length === 0) return;
-
-    setIsLoadingState(true);
-
-    const nextState = redoStack[0];
-    
-    setUndoStack(prev => [...prev, nextState]);
-    setRedoStack(prev => prev.slice(1));
-    
-    fabricRef.current.loadFromJSON(nextState, () => {
-      fabricRef.current.renderAll();
-      setIsLoadingState(false);
-      // Ensure the active object is updated after state load
-      setSelectedObj(fabricRef.current.getActiveObject() || null);
-    });
+    if (canRedo) {
+      dispatch({ type: 'REDO' });
+    }
   }
 
   // Text functions
   const addText = () => {
     if (!fabricRef.current || !textValue.trim()) return
-    
-    // Save state before adding
-    saveState()
     
     const textbox = new fabric.Textbox(textValue.trim(), {
       left: 60,
@@ -341,7 +358,8 @@ export default function EnhancedFabricCustomizer({ baseProductId }: EnhancedCust
       strokeWidth: strokeEnabled ? strokeWidth : 0 
     })
     fabricRef.current.requestRenderAll()
-  }, [selectedObj, textValue, fontSize, fontFamily, textColor, isBold, isItalic, textAlign, strokeEnabled, strokeColor, strokeWidth])
+    debouncedSave()
+  }, [selectedObj, textValue, fontSize, fontFamily, textColor, isBold, isItalic, textAlign, strokeEnabled, strokeColor, strokeWidth, debouncedSave])
 
   // Shape functions
   const addRectangle = () => {
@@ -454,6 +472,7 @@ export default function EnhancedFabricCustomizer({ baseProductId }: EnhancedCust
     
     selectedObj.applyFilters()
     fabricRef.current?.requestRenderAll()
+    manualSaveState()
   }
 
   // Object manipulation functions
@@ -461,7 +480,8 @@ export default function EnhancedFabricCustomizer({ baseProductId }: EnhancedCust
     if (!selectedObj) return
     selectedObj.set('opacity', opacity / 100)
     fabricRef.current?.requestRenderAll()
-  }, [selectedObj])
+    debouncedSave()
+  }, [selectedObj, debouncedSave])
 
   const removeSelected = () => {
     if (fabricRef.current && selectedObj) {
@@ -491,6 +511,7 @@ export default function EnhancedFabricCustomizer({ baseProductId }: EnhancedCust
     if (fabricRef.current && selectedObj) { 
       fabricRef.current.bringForward(selectedObj)
       fabricRef.current.requestRenderAll() 
+      manualSaveState()
     } 
   }
   
@@ -498,6 +519,7 @@ export default function EnhancedFabricCustomizer({ baseProductId }: EnhancedCust
     if (fabricRef.current && selectedObj) { 
       fabricRef.current.sendBackwards(selectedObj)
       fabricRef.current.requestRenderAll() 
+      manualSaveState()
     } 
   }
 
@@ -505,6 +527,7 @@ export default function EnhancedFabricCustomizer({ baseProductId }: EnhancedCust
     if (fabricRef.current && selectedObj) { 
       fabricRef.current.bringToFront(selectedObj)
       fabricRef.current.requestRenderAll() 
+      manualSaveState()
     } 
   }
   
@@ -512,6 +535,7 @@ export default function EnhancedFabricCustomizer({ baseProductId }: EnhancedCust
     if (fabricRef.current && selectedObj) { 
       fabricRef.current.sendToBack(selectedObj)
       fabricRef.current.requestRenderAll() 
+      manualSaveState()
     } 
   }
 
@@ -520,7 +544,8 @@ export default function EnhancedFabricCustomizer({ baseProductId }: EnhancedCust
     if (!fabricRef.current) return
     setIsLoadingState(true)
     applyTemplate(fabricRef.current, template)
-    setTimeout(() => setIsLoadingState(false), 100) // Small delay to ensure template is applied
+    manualSaveState()
+    setIsLoadingState(false)
   }
 
   // Export function
@@ -634,7 +659,7 @@ export default function EnhancedFabricCustomizer({ baseProductId }: EnhancedCust
                       variant="outline" 
                       size="sm" 
                       onClick={undo}
-                      disabled={undoStack.length === 0}
+                      disabled={!canUndo}
                     >
                       <Undo2 className="w-4 h-4" />
                     </Button>
@@ -642,7 +667,7 @@ export default function EnhancedFabricCustomizer({ baseProductId }: EnhancedCust
                       variant="outline" 
                       size="sm" 
                       onClick={redo}
-                      disabled={redoStack.length === 0}
+                      disabled={!canRedo}
                     >
                       <Redo2 className="w-4 h-4" />
                     </Button>
