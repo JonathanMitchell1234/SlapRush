@@ -1,6 +1,6 @@
 "use client"
 
-import React, { useCallback, useEffect, useRef, useState } from 'react'
+import React, { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react'
 import * as fabricNS from 'fabric'
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const fabric: any = fabricNS
