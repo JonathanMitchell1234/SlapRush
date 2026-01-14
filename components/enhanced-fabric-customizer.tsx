@@ -178,12 +178,24 @@ export default function EnhancedFabricCustomizer({ baseProductId }: EnhancedCust
     }
   }, [history.index, history.stack, isLoadingState])
 
-  // NOTE: The 'saveState' and 'debouncedSaveState' functions are removed as they are replaced by manualSaveState and the reducer pattern.
+  // Create a ref to store the latest manualSaveState function
+  const manualSaveStateRef = useRef(manualSaveState);
+  useEffect(() => {
+    manualSaveStateRef.current = manualSaveState;
+  }, [manualSaveState]);
 
-  const debouncedSave = useMemo(
-    () => debounce(manualSaveState, 300),
-    [manualSaveState]
-  );
+  // Create a stable debounced save function
+  const debouncedSaveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  
+  // Create a stable debounced function that doesn't change
+  const debouncedSave = useRef(() => {
+    if (debouncedSaveTimeoutRef.current) {
+      clearTimeout(debouncedSaveTimeoutRef.current);
+    }
+    debouncedSaveTimeoutRef.current = setTimeout(() => {
+      manualSaveStateRef.current();
+    }, 300);
+  });
 
   const initFabric = useCallback(() => {
     if (!canvasRef.current) return
@@ -217,7 +229,7 @@ export default function EnhancedFabricCustomizer({ baseProductId }: EnhancedCust
     })
     
     // Only save state when object is modified by user (moved, scaled, etc.)
-    canvas.on('object:modified', debouncedSave)
+    canvas.on('object:modified', debouncedSave.current)
     
     // Save initial state
     const initialState = JSON.stringify(canvas.toJSON())
@@ -252,7 +264,7 @@ export default function EnhancedFabricCustomizer({ baseProductId }: EnhancedCust
       })
     })
 
-  }, [activeArea, areas, debouncedSave])
+  }, [activeArea, areas])
 
   // Recreate canvas when area changes
   useEffect(() => {
@@ -358,8 +370,8 @@ export default function EnhancedFabricCustomizer({ baseProductId }: EnhancedCust
       strokeWidth: strokeEnabled ? strokeWidth : 0 
     })
     fabricRef.current.requestRenderAll()
-    debouncedSave()
-  }, [selectedObj, textValue, fontSize, fontFamily, textColor, isBold, isItalic, textAlign, strokeEnabled, strokeColor, strokeWidth, debouncedSave])
+    debouncedSave.current()
+  }, [selectedObj, textValue, fontSize, fontFamily, textColor, isBold, isItalic, textAlign, strokeEnabled, strokeColor, strokeWidth])
 
   // Shape functions
   const addRectangle = () => {
@@ -480,8 +492,8 @@ export default function EnhancedFabricCustomizer({ baseProductId }: EnhancedCust
     if (!selectedObj) return
     selectedObj.set('opacity', opacity / 100)
     fabricRef.current?.requestRenderAll()
-    debouncedSave()
-  }, [selectedObj, debouncedSave])
+    debouncedSave.current()
+  }, [selectedObj])
 
   const removeSelected = () => {
     if (fabricRef.current && selectedObj) {
